@@ -1,16 +1,7 @@
-from langchain_ollama import OllamaEmbeddings
-from langchain_chroma import Chroma
-
-CHROMA_PATH = "chroma_db"
-EMBED_MODEL  = "nomic-embed-text"
+from app.shared import get_vectorstore
 
 print("🔍 Connecting to ChromaDB...")
-
-embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-vectorstore = Chroma(
-    persist_directory=CHROMA_PATH,
-    embedding_function=embeddings
-)
+vectorstore = get_vectorstore()
 
 total = vectorstore._collection.count()
 print(f"✅ Total chunks in ChromaDB: {total}")
