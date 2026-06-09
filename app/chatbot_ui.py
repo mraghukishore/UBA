@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
 from langchain_chroma import Chroma
@@ -9,6 +10,47 @@ from langchain_core.output_parsers import StrOutputParser
 CHROMA_PATH = "chroma_db"
 EMBED_MODEL  = "nomic-embed-text"
 LLM_MODEL    = "llama3"
+
+CHATBOT_PROMPT_TEMPLATE = """
+You are a helpful customer service assistant for Deccan Power & Gas Utilities Ltd.
+Answer the customer's question using ONLY the context provided below.
+Be concise, friendly and professional.
+If the answer is not in the context, say "I'm sorry, I don't have that information.
+Please contact our helpline at 1800-XXX-XXXX for assistance."
+
+Context:
+{context}
+
+Customer Question: {question}
+
+Answer:"""
+
+
+def format_docs(docs):
+    """Join document page_content fields with double newlines."""
+    return "\n\n".join(doc.page_content for doc in docs)
+
+
+def format_raw_results(docs):
+    """Format raw retrieval results for display when LLM is off."""
+    answer = "📄 **Raw document chunks retrieved:**\n\n"
+    for i, doc in enumerate(docs):
+        src = doc.metadata.get('source', 'Unknown')
+        src = os.path.basename(src)
+        answer += f"**Chunk {i+1}** — `{src}`\n"
+        answer += f"{doc.page_content}\n\n---\n\n"
+    return answer
+
+
+def init_chat_history():
+    """Initialize chat history with a welcome message if not already set."""
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Hello! 👋 I'm your Deccan Power & Gas Utilities billing assistant. How can I help you today?"
+        })
+
 
 # ── Page setup ─────────────────────────────────────────────
 st.set_page_config(
@@ -66,22 +108,7 @@ def load_rag_chain():
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     llm = OllamaLLM(model=LLM_MODEL)
 
-    prompt = PromptTemplate.from_template("""
-You are a helpful customer service assistant for Deccan Power & Gas Utilities Ltd.
-Answer the customer's question using ONLY the context provided below.
-Be concise, friendly and professional.
-If the answer is not in the context, say "I'm sorry, I don't have that information.
-Please contact our helpline at 1800-XXX-XXXX for assistance."
-
-Context:
-{context}
-
-Customer Question: {question}
-
-Answer:""")
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
+    prompt = PromptTemplate.from_template(CHATBOT_PROMPT_TEMPLATE)
 
     chain = (
         {"context": retriever | format_docs, "question": RunnablePassthrough()}
@@ -100,12 +127,7 @@ else:
 st.markdown("---")
 
 # ── Chat history ───────────────────────────────────────────
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": "Hello! 👋 I'm your Deccan Power & Gas Utilities billing assistant. How can I help you today?"
-    })
+init_chat_history()
 
 # Display chat history
 for message in st.session_state.messages:
@@ -133,13 +155,7 @@ if question := st.chat_input("Type your question here..."):
                     # ── LLM OFF: raw chunks only ───────────────
                     vectorstore = load_vectorstore()
                     docs = vectorstore.similarity_search(question, k=3)
-                    answer = "📄 **Raw document chunks retrieved:**\n\n"
-                    for i, doc in enumerate(docs):
-                        src = doc.metadata.get('source', 'Unknown')
-                        import os
-                        src = os.path.basename(src)
-                        answer += f"**Chunk {i+1}** — `{src}`\n"
-                        answer += f"{doc.page_content}\n\n---\n\n"
+                    answer = format_raw_results(docs)
 
                 st.markdown(answer)
                 st.session_state.messages.append({
