@@ -1,9 +1,19 @@
+import os
+import logging
+import traceback
+
 import streamlit as st
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # ── Config ─────────────────────────────────────────────────
 CHROMA_PATH = "chroma_db"
@@ -52,19 +62,35 @@ with st.sidebar:
 # ── Load embeddings and vectorstore (always needed) ────────
 @st.cache_resource
 def load_vectorstore():
-    embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-    vectorstore = Chroma(
-        persist_directory=CHROMA_PATH,
-        embedding_function=embeddings
-    )
-    return vectorstore
+    try:
+        embeddings = OllamaEmbeddings(model=EMBED_MODEL)
+        vectorstore = Chroma(
+            persist_directory=CHROMA_PATH,
+            embedding_function=embeddings
+        )
+        return vectorstore
+    except Exception as exc:
+        logger.error("Failed to load vectorstore: %s", exc)
+        raise ConnectionError(
+            f"Could not connect to ChromaDB at '{CHROMA_PATH}' "
+            f"(embed model='{EMBED_MODEL}'). Is Ollama running? "
+            f"Error: {exc}"
+        ) from exc
 
 # ── Load RAG chain (only when LLM is ON) ───────────────────
 @st.cache_resource
 def load_rag_chain():
     vectorstore = load_vectorstore()
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    llm = OllamaLLM(model=LLM_MODEL)
+
+    try:
+        llm = OllamaLLM(model=LLM_MODEL)
+    except Exception as exc:
+        logger.error("Failed to load LLM: %s", exc)
+        raise ConnectionError(
+            f"Could not load LLM model '{LLM_MODEL}' via Ollama. "
+            f"Is Ollama running and the model pulled? Error: {exc}"
+        ) from exc
 
     prompt = PromptTemplate.from_template("""
 You are a helpful customer service assistant for Deccan Power & Gas Utilities Ltd.
@@ -136,7 +162,6 @@ if question := st.chat_input("Type your question here..."):
                     answer = "📄 **Raw document chunks retrieved:**\n\n"
                     for i, doc in enumerate(docs):
                         src = doc.metadata.get('source', 'Unknown')
-                        import os
                         src = os.path.basename(src)
                         answer += f"**Chunk {i+1}** — `{src}`\n"
                         answer += f"{doc.page_content}\n\n---\n\n"
@@ -147,5 +172,28 @@ if question := st.chat_input("Type your question here..."):
                     "content": answer
                 })
 
-            except Exception as e:
-                st.error(f"⚠️ Error: {str(e)}")
+            except ConnectionError as exc:
+                error_msg = (
+                    f"⚠️ **Connection error:** {exc}\n\n"
+                    "Please make sure Ollama is running and the required "
+                    "models are pulled (`ollama pull llama3` / "
+                    "`ollama pull nomic-embed-text`)."
+                )
+                logger.error("Connection error during query: %s", exc)
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+
+            except Exception as exc:
+                error_msg = f"⚠️ **Unexpected error:** {exc}"
+                logger.error(
+                    "Unexpected error during query:\n%s",
+                    traceback.format_exc()
+                )
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
