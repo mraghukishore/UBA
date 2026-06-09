@@ -1,14 +1,9 @@
-import streamlit as st
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
-from langchain_chroma import Chroma
-from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+import os
 
-# ── Config ─────────────────────────────────────────────────
-CHROMA_PATH = "chroma_db"
-EMBED_MODEL  = "nomic-embed-text"
-LLM_MODEL    = "llama3"
+import streamlit as st
+
+from app.config import LLM_MODEL
+from app.shared import get_vectorstore, build_rag_chain
 
 # ── Page setup ─────────────────────────────────────────────
 st.set_page_config(
@@ -41,7 +36,7 @@ with st.sidebar:
     st.markdown("- Outage reporting")
     st.markdown("- Meter issues")
     st.markdown("---")
-    st.markdown("🤖 Powered by **llama3** via Ollama")
+    st.markdown(f"🤖 Powered by **{LLM_MODEL}** via Ollama")
     st.markdown("🗄️ Knowledge base: **ChromaDB**")
     st.markdown("⚡ Running **100% locally**")
     st.markdown("---")
@@ -51,45 +46,13 @@ with st.sidebar:
 
 # ── Load embeddings and vectorstore (always needed) ────────
 @st.cache_resource
-def load_vectorstore():
-    embeddings = OllamaEmbeddings(model=EMBED_MODEL)
-    vectorstore = Chroma(
-        persist_directory=CHROMA_PATH,
-        embedding_function=embeddings
-    )
-    return vectorstore
+def _load_vectorstore():
+    return get_vectorstore()
 
 # ── Load RAG chain (only when LLM is ON) ───────────────────
 @st.cache_resource
-def load_rag_chain():
-    vectorstore = load_vectorstore()
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    llm = OllamaLLM(model=LLM_MODEL)
-
-    prompt = PromptTemplate.from_template("""
-You are a helpful customer service assistant for Deccan Power & Gas Utilities Ltd.
-Answer the customer's question using ONLY the context provided below.
-Be concise, friendly and professional.
-If the answer is not in the context, say "I'm sorry, I don't have that information.
-Please contact our helpline at 1800-XXX-XXXX for assistance."
-
-Context:
-{context}
-
-Customer Question: {question}
-
-Answer:""")
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-    return chain
+def _load_rag_chain():
+    return build_rag_chain(_load_vectorstore())
 
 # ── Main UI ────────────────────────────────────────────────
 st.title("🔌 Utility Billing Assistant")
@@ -126,17 +89,16 @@ if question := st.chat_input("Type your question here..."):
             try:
                 if llm_enabled:
                     # ── LLM ON: full RAG answer ────────────────
-                    rag_chain = load_rag_chain()
+                    rag_chain = _load_rag_chain()
                     answer = rag_chain.invoke(question)
 
                 else:
                     # ── LLM OFF: raw chunks only ───────────────
-                    vectorstore = load_vectorstore()
+                    vectorstore = _load_vectorstore()
                     docs = vectorstore.similarity_search(question, k=3)
                     answer = "📄 **Raw document chunks retrieved:**\n\n"
                     for i, doc in enumerate(docs):
                         src = doc.metadata.get('source', 'Unknown')
-                        import os
                         src = os.path.basename(src)
                         answer += f"**Chunk {i+1}** — `{src}`\n"
                         answer += f"{doc.page_content}\n\n---\n\n"
