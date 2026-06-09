@@ -1,9 +1,17 @@
+import logging
+import os
+
 import streamlit as st
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+
+logger = logging.getLogger(__name__)
+
+# Maximum allowed length for user input (characters)
+MAX_INPUT_LENGTH = 1000
 
 # ── Config ─────────────────────────────────────────────────
 CHROMA_PATH = "chroma_db"
@@ -114,6 +122,15 @@ for message in st.session_state.messages:
 
 # ── Chat input ─────────────────────────────────────────────
 if question := st.chat_input("Type your question here..."):
+    # Input validation: reject empty or excessively long inputs
+    question = question.strip()
+    if len(question) > MAX_INPUT_LENGTH:
+        st.warning(
+            f"Please keep your question under {MAX_INPUT_LENGTH} characters."
+        )
+        st.stop()
+    if not question:
+        st.stop()
 
     # Show user message
     st.session_state.messages.append({"role": "user", "content": question})
@@ -136,7 +153,6 @@ if question := st.chat_input("Type your question here..."):
                     answer = "📄 **Raw document chunks retrieved:**\n\n"
                     for i, doc in enumerate(docs):
                         src = doc.metadata.get('source', 'Unknown')
-                        import os
                         src = os.path.basename(src)
                         answer += f"**Chunk {i+1}** — `{src}`\n"
                         answer += f"{doc.page_content}\n\n---\n\n"
@@ -148,4 +164,8 @@ if question := st.chat_input("Type your question here..."):
                 })
 
             except Exception as e:
-                st.error(f"⚠️ Error: {str(e)}")
+                logger.exception("Error processing user query")
+                st.error(
+                    "⚠️ Something went wrong. Please try again or "
+                    "contact support if the issue persists."
+                )
